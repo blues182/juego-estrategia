@@ -1,5 +1,5 @@
 import { FACTIONS, type FactionId } from "../catalog/factions";
-import { UNIT_TYPES, type UnitType } from "../catalog/unitTypes";
+import { UNIT_TYPES, type UnitType, getDefenseType, getAttackDamage } from "../catalog/unitTypes";
 
 // Instancia en partida (lo mínimo necesario para combate)
 export interface UnitInstance {
@@ -17,6 +17,10 @@ export interface CombatResult {
   defenderDamage: number; // daño que recibe defensor
   attackerDestroyed: boolean;
   defenderDestroyed: boolean;
+  attackerForceRetreated: boolean; // retiro forzado por supply bajo
+  defenderForceRetreated: boolean;
+  attackerExpGained: number; // experiencia ganada en combate
+  defenderExpGained: number;
   notes: string[];
 }
 
@@ -42,10 +46,39 @@ function expMod(exp: number): number {
   return 1.0 + e * 0.25;
 }
 
-/** HP afecta desempeño: 0.55..1.0 (nunca inútil) */
-function hpPerformanceMod(hp: number, hpMax: number): number {
-  const p = clamp(hp, 0, hpMax) / hpMax;
-  return 0.55 + p * 0.45;
+/** Retiro forzado si supply < 20% */
+function checkForceRetreat(unit: UnitInstance): boolean {
+  return unit.supply < 20;
+}
+
+/**
+ * Experiencia ganada en combate:
+ * - Base: 5 puntos por combate
+ * - +2 si fue atacante
+ * - +3 si causó daño significativo (>50% del HP enemigo)
+ * - +2 si sobrevivió todo el combate
+ */
+function calcExperienceGain(
+  isAttacker: boolean,
+  damageDealt: number,
+  damageReceived: number,
+  enemyHpMax: number,
+  survived: boolean
+): number {
+  let exp = 5; // base
+  if (isAttacker) exp += 2;
+  if (damageDealt > enemyHpMax * 0.5) exp += 3;
+  if (survived) exp += 2;
+  return exp;
+}
+
+/**
+ * Bono de veteranía por experiencia:
+ * - Cada 20 exp = +1% ataque (max +20% a 100 exp)
+ */
+function veterancyAttackBonus(experience: number): number {
+  const vet = Math.floor(Math.min(experience, 100) / 20);
+  return 1 + vet * 0.01; // 1.0 a 1.05
 }
 
 /** Bono por HP bajo con cap (para GER/JPN etc.) */
@@ -62,8 +95,7 @@ function lowHpBonus(hp: number, hpMax: number, factionId: FactionId): number {
 
 /**
  * Daño final por tick (simple y balanceable)
- * - Usa softAttack/hardAttack si luego metes armor, por ahora usamos un "attack" genérico:
- *   attack = softAttack (default)
+ * - Selecciona el daño correcto del AttackProfile según el tipo del defensor
  */
 function computeDamage(
   attackerType: UnitType,
@@ -74,8 +106,11 @@ function computeDamage(
   const fAtk = FACTIONS[attacker.owner];
   const fDef = FACTIONS[defender.owner];
 
-  // ataque base (si luego metes "armor", aquí decides soft vs hard)
-  const baseAttack = attackerType.softAttack;
+  // Determina qué tipo de defensa tiene el defensor
+  const defenseType = getDefenseType(defenderType);
+  
+  // Obtiene el daño base del atacante contra ese tipo defensivo
+  const baseAttack = getAttackDamage(attackerType, defenseType);
   const baseDefense = defenderType.defense;
 
   const atkMult =
@@ -84,7 +119,8 @@ function computeDamage(
     supplyMod(attacker.supply) *
     expMod(attacker.experience) *
     hpPerformanceMod(attacker.hp, attackerType.hpMax) *
-    lowHpBonus(attacker.hp, attackerType.hpMax, attacker.owner);
+    lowHpBonus(attacker.hp, attackerType.hpMax, attacker.owner) *
+    veterancyAttackBonus(attacker.experience);
 
   const defMult =
     fDef.defenseMult *
@@ -110,7 +146,7 @@ function computeDamage(
 
 /**
  * Resuelve combate 1v1 por tick (simétrico).
- * Aplicas el resultado fuera: hp -= damageRecibido
+ * Aplicas el resultado fuera: hp -= damageRecibido, experience += expGain
  */
 export function resolveDuel(attacker: UnitInstance, defender: UnitInstance): CombatResult {
   const notes: string[] = [];
@@ -121,6 +157,13 @@ export function resolveDuel(attacker: UnitInstance, defender: UnitInstance): Com
   if (!aType) throw new Error(`Unit type no existe: ${attacker.typeId}`);
   if (!dType) throw new Error(`Unit type no existe: ${defender.typeId}`);
 
+  // Chequea retiro forzado ANTES de combate
+  const attackerRetreats = checkForceRetreat(attacker);
+  const defenderRetreats = checkForceRetreat(defender);
+
+  if (attackerRetreats) notes.push("Atacante se retira: supply crítico (<20%)");
+  if (defenderRetreats) notes.push("Defensor se retira: supply crítico (<20%)");
+
   const dmgToDef = computeDamage(aType, attacker, dType, defender);
   const dmgToAtk = computeDamage(dType, defender, aType, attacker);
 
@@ -129,11 +172,31 @@ export function resolveDuel(attacker: UnitInstance, defender: UnitInstance): Com
   const defenderDestroyed = defender.hp - dmgToDef <= 0;
   const attackerDestroyed = attacker.hp - dmgToAtk <= 0;
 
+  // Experiencia ganada
+  const atkExpGained = calcExperienceGain(
+    true,
+    dmgToDef,
+    dmgToAtk,
+    dType.hpMax,
+    !attackerDestroyed && !attackerRetreats
+  );
+  const defExpGained = calcExperienceGain(
+    false,
+    dmgToAtk,
+    dmgToDef,
+    aType.hpMax,
+    !defenderDestroyed && !defenderRetreats
+  );
+
   return {
     attackerDamage: dmgToAtk,
     defenderDamage: dmgToDef,
     attackerDestroyed,
     defenderDestroyed,
+    attackerForceRetreated: attackerRetreats,
+    defenderForceRetreated: defenderRetreats,
+    attackerExpGained: atkExpGained,
+    defenderExpGained: defExpGained,
     notes,
   };
 }
