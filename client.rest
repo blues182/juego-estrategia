@@ -1,0 +1,74 @@
+@baseUrl = http://localhost:3000
+
+### 1. Health Check
+GET {{baseUrl}}/health
+
+###
+
+### 2. Crear Partida
+POST {{baseUrl}}/games
+
+###
+
+### 3. Ver Estado (REEMPLAZA abc123 con el gameId del paso anterior)
+GET {{baseUrl}}/games/abc123
+
+###
+
+### 4. Agregar Ejército USA en Normandía
+POST {{baseUrl}}/games/abc123/armies
+Content-Type: application/json
+
+{
+  "owner": "USA",
+  "provinceId": "1-1",
+  "units": [
+    { "typeId": "infantry" },
+    { "typeId": "infantry" },
+    { "typeId": "medium_tank" }
+  ]
+}
+
+###
+
+### 5. Agregar Ejército GER en el Rin
+POST {{baseUrl}}/games/abc123/armies
+Content-Type: application/json
+
+{
+  "owner": "GER",
+  "provinceId": "3-1",
+  "units": [
+    { "typeId": "heavy_tank" },
+    { "typeId": "infantry" },
+    { "typeId": "fighter" }
+  ]
+}
+
+###
+
+### 6. Dar orden de movimiento (USA hacia Bélgica)
+### REEMPLAZA army-id-aqui con el armyId del paso 4
+POST {{baseUrl}}/games/abc123/orders
+Content-Type: application/json
+
+{
+  "armyId": "army-id-aqui",
+  "orderType": "move",
+  "targetProvinceId": "2-2"
+}
+
+###
+
+### 7. Ejecutar 1 Tick
+POST {{baseUrl}}/games/abc123/tick
+
+###
+
+### 8. Ejecutar 5 Ticks
+POST {{baseUrl}}/games/abc123/ticks/5
+
+###
+
+### 9. Ver estado final
+GET {{baseUrl}}/games/abc123
