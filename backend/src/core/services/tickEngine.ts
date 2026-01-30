@@ -2,28 +2,42 @@ import type { GameState } from "../entities/gameState";
 import type { Army } from "../entities/army";
 import {
   getArmiesInProvince,
-  getArmy,
   removeArmy,
   checkVictory,
 } from "../entities/gameState";
 import {
-  damageArmy,
   reduceMorale,
   isArmyDestroyed,
-  getArmyTotalHp,
+  hasAirUnits,
+  isRefueling,
 } from "../entities/army";
 import { canMoveBetweenProvinces, getProvince } from "../entities/map";
 import { tickProduction } from "../entities/country";
 import { resolveDuel } from "../rules/combat";
+import { UNIT_TYPES } from "../catalog/unitTypes";
 import type { UnitInstance } from "../rules/combat";
+
+/** 1 tick = 5 minutos */
+export const MINUTES_PER_TICK = 5;
+/** Aviones: repostar cada 40 min = 8 ticks */
+export const REFUEL_INTERVAL_TICKS = 8;
+/** Repostaje dura 5 min = 1 tick */
+export const REFUEL_DURATION_TICKS = 1;
+/** Un ejército solo puede atacar cada 15 min = 3 ticks */
+export const ATTACK_COOLDOWN_TICKS = 3;
+
+const getUnitType = (typeId: string) => UNIT_TYPES[typeId as keyof typeof UNIT_TYPES];
 
 /**
  * TickEngine orquesta la ejecución de un tick completo:
+ * 0. Actualizar estado de repostaje de aviones
  * 1. Producción de recursos
- * 2. Movimiento de ejércitos
- * 3. Resolución de combates
- * 4. Chequeo de victoria
- * 5. Limpieza de órdenes
+ * 2. Movimiento / ataque / move_delayed (patrol no mueve)
+ * 3. Resolución de combates (marca lastAttackTick; cooldown 15 min)
+ * 4. Limpieza de ejércitos destruidos
+ * 5. Chequeo de victoria
+ * 6. Incrementar tick
+ * 7. Limpieza de órdenes
  */
 
 export interface TickResult {
@@ -39,10 +53,55 @@ export interface TickEvent {
 }
 
 /**
+ * Actualiza estado de repostaje de aviones: cada 40 min repostan 5 min.
+ */
+function updateAirRefuelState(state: GameState): TickEvent[] {
+  const events: TickEvent[] = [];
+  const t = state.currentTick;
+
+  for (const army of Object.values(state.armies)) {
+    if (!hasAirUnits(army, getUnitType)) continue;
+
+    // Terminar repostaje al tick siguiente al de repostaje (durante t === airRefuelingUntilTick siguen repostando)
+    if (army.airRefuelingUntilTick != null && t > army.airRefuelingUntilTick) {
+      army.airRefuelingUntilTick = undefined;
+      army.airTicksSinceRefuel = 0;
+      events.push({
+        type: "movement",
+        message: `${army.name}: Finalizó repostaje de combustible`,
+      });
+      continue;
+    }
+
+    // Si está repostando, no avanza el contador
+    if (army.airRefuelingUntilTick != null) continue;
+
+    const since = (army.airTicksSinceRefuel ?? 0) + 1;
+    army.airTicksSinceRefuel = since;
+
+    if (since >= REFUEL_INTERVAL_TICKS) {
+      army.airRefuelingUntilTick = t + REFUEL_DURATION_TICKS;
+      army.airTicksSinceRefuel = 0;
+      events.push({
+        type: "movement",
+        message: `${army.name}: Repostando combustible (5 min)`,
+      });
+    }
+  }
+
+  return events;
+}
+
+/**
  * Procesa un tick completo
  */
 export function processTick(state: GameState): TickResult {
   const events: TickEvent[] = [];
+  const t = state.currentTick;
+
+  // PASO 0: Repostaje de aviones
+  const refuelEvents = updateAirRefuelState(state);
+  events.push(...refuelEvents);
 
   // PASO 1: Producción
   for (const country of Object.values(state.countries)) {
@@ -53,7 +112,7 @@ export function processTick(state: GameState): TickResult {
     message: "Producción de recursos completada",
   });
 
-  // PASO 2: Movimiento
+  // PASO 2: Movimiento / ataque / move_delayed (patrol no mueve)
   const movementEvents = processMovement(state);
   events.push(...movementEvents);
 
@@ -90,34 +149,70 @@ export function processTick(state: GameState): TickResult {
 }
 
 /**
- * PASO 2: Procesa movimiento de ejércitos
+ * PASO 2: Procesa movimiento, ataque, move_delayed. Patrol no mueve (solo aplica repostaje).
+ * - Aviones en repostaje no se mueven ni atacan.
+ * - Ataque: cooldown 15 min (solo puede atacar cada 3 ticks).
+ * - move_delayed: solo ejecuta cuando currentTick >= executeAtTick.
  */
 function processMovement(state: GameState): TickEvent[] {
   const events: TickEvent[] = [];
+  const t = state.currentTick;
 
   for (const army of Object.values(state.armies)) {
-    if (!army.order || army.order.type !== "move") continue;
+    if (!army.order) continue;
+
+    // Aviones en repostaje: no moverse ni atacar
+    if (isRefueling(army, t)) continue;
+
+    const isMove = army.order.type === "move";
+    const isAttack = army.order.type === "attack";
+    const isMoveDelayed = army.order.type === "move_delayed";
+    const isPatrol = army.order.type === "patrol";
+
+    if (isPatrol) continue; // patrol = quedarse; la lógica de repostaje ya se aplicó arriba
+
+    if (isMoveDelayed) {
+      const executeAt = army.order.executeAtTick ?? t;
+      if (t < executeAt) continue; // aún no es el tick de ejecución
+      // ejecutar como move
+    }
 
     const targetProvinceId = army.order.targetProvinceId;
-    if (!targetProvinceId) continue;
+    if (!targetProvinceId && !isMoveDelayed) continue;
+    if (isMoveDelayed && !targetProvinceId) continue;
 
+    const tid = targetProvinceId!;
     const currentProvince = getProvince(state.map, army.provinceId);
-    const targetProvince = getProvince(state.map, targetProvinceId);
+    const targetProvince = getProvince(state.map, tid);
 
-    // Chequea adyacencia
     if (!canMoveBetweenProvinces(currentProvince, targetProvince)) {
       events.push({
         type: "movement",
-        message: `${army.name}: No puede moverse a ${targetProvince.name} (no adyacente)`,
+        message: `${army.name}: No puede ${isAttack ? "atacar" : "moverse"} a ${targetProvince.name} (no adyacente)`,
       });
       continue;
     }
 
-    // Mueve el ejército
-    army.provinceId = targetProvinceId;
+    // Cooldown de ataque: solo puede atacar cada 15 min (3 ticks)
+    if (isAttack) {
+      const last = army.lastAttackTick ?? -999;
+      if (t < last + ATTACK_COOLDOWN_TICKS) {
+        events.push({
+          type: "movement",
+          message: `${army.name}: En cooldown de ataque (próximo ataque en ${(last + ATTACK_COOLDOWN_TICKS - t) * MINUTES_PER_TICK} min)`,
+        });
+        continue;
+      }
+    }
+
+    army.provinceId = tid;
     events.push({
       type: "movement",
-      message: `${army.name}: Se movió a ${targetProvince.name}`,
+      message: isAttack
+        ? `${army.name}: Atacó y se desplazó a ${targetProvince.name}`
+        : isMoveDelayed
+          ? `${army.name}: Se movió (retrasado) a ${targetProvince.name}`
+          : `${army.name}: Se movió a ${targetProvince.name}`,
     });
   }
 
@@ -209,6 +304,10 @@ function resolveBattle(
   reduceMorale(armyA, 10);
   reduceMorale(armyB, 10);
 
+  // Cooldown de ataque: solo pueden atacar de nuevo en 15 min
+  armyA.lastAttackTick = state.currentTick;
+  armyB.lastAttackTick = state.currentTick;
+
   const message =
     `${armyA.name} vs ${armyB.name}: ` +
     (armyA.units.length > armyB.units.length
@@ -256,10 +355,15 @@ function cleanupDestroyedArmies(state: GameState): TickEvent[] {
 }
 
 /**
- * PASO 7: Limpia órdenes después de ejecución
+ * PASO 7: Limpia órdenes después de ejecución.
+ * No limpia move_delayed si executeAtTick > currentTick (aún no se ejecutó).
  */
 function clearAllOrders(state: GameState): void {
+  const t = state.currentTick;
   for (const army of Object.values(state.armies)) {
+    const o = army.order;
+    if (!o) continue;
+    if (o.type === "move_delayed" && o.executeAtTick != null && t < o.executeAtTick) continue;
     army.order = null;
   }
 }

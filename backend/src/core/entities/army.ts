@@ -19,17 +19,31 @@ export interface Army {
   
   // Nombre identificativo
   name?: string;
+  
+  // Cooldown de ataque: último tick en que participó en combate (solo puede atacar cada 15 min)
+  lastAttackTick?: number;
+  
+  // Aviones: repostaje cada 40 min durante 5 min
+  airRefuelingUntilTick?: number;  // hasta qué tick está repostando (solo si tiene aviones)
+  airTicksSinceRefuel?: number;    // ticks en misión desde último repostaje
 }
 
 /**
  * Órdenes posibles para un ejército
+ * - hold: quedarse
+ * - move: moverse a provincia adyacente
+ * - attack: atacar (mover a provincia y combatir; cooldown 15 min)
+ * - move_delayed: moverse pero esperar delayTicks antes de ejecutar
+ * - patrol: solo aviones; patrullar (aplica lógica de repostaje cada 40 min)
  */
-export type ArmyOrderType = "hold" | "move" | "attack";
+export type ArmyOrderType = "hold" | "move" | "attack" | "move_delayed" | "patrol";
 
 export interface ArmyOrder {
   type: ArmyOrderType;
-  targetProvinceId?: string;  // para move/attack
-  attackArmyId?: string;      // para ataque específico a ejército
+  targetProvinceId?: string;   // para move / attack / move_delayed
+  attackArmyId?: string;        // para ataque específico a ejército
+  delayTicks?: number;          // para move_delayed: cuántos ticks esperar
+  executeAtTick?: number;       // para move_delayed: tick en que se ejecuta (currentTick + delayTicks al asignar)
 }
 
 /**
@@ -127,4 +141,23 @@ export function reduceMorale(army: Army, amount: number): void {
  */
 export function isArmyDestroyed(army: Army): boolean {
   return army.units.length === 0;
+}
+
+/**
+ * Indica si el ejército tiene al menos una unidad aérea (sujeta a repostaje cada 40 min / 5 min)
+ */
+export function hasAirUnits(
+  army: Army,
+  getUnitType: (typeId: string) => { domain?: string } | undefined
+): boolean {
+  return army.units.some((u) => getUnitType(u.typeId)?.domain === "air");
+}
+
+/**
+ * Indica si el ejército está repostando (aviones) y no puede moverse/atacar este tick.
+ * Repostaje dura hasta el tick airRefuelingUntilTick (inclusive).
+ */
+export function isRefueling(army: Army, currentTick: number): boolean {
+  if (army.airRefuelingUntilTick == null) return false;
+  return currentTick <= army.airRefuelingUntilTick;
 }

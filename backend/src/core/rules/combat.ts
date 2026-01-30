@@ -46,6 +46,13 @@ function expMod(exp: number): number {
   return 1.0 + e * 0.25;
 }
 
+/** Penalización por HP bajo: 0.5..1.0 según hp/hpMax */
+function hpPerformanceMod(hp: number, hpMax: number): number {
+  if (hpMax <= 0) return 0.5;
+  const pct = clamp(hp, 0, hpMax) / hpMax;
+  return 0.5 + pct * 0.5; // 0.5 cuando HP=0, 1.0 cuando HP=100%
+}
+
 /** Retiro forzado si supply < 20% */
 function checkForceRetreat(unit: UnitInstance): boolean {
   return unit.supply < 20;

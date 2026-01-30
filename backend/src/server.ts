@@ -5,12 +5,12 @@ import { v4 as uuidv4 } from "uuid";
 // Importar core
 import { FACTIONS, type FactionId } from "./core/catalog/factions";
 import { UNIT_TYPES } from "./core/catalog/unitTypes";
-import { createGameState, getArmy, addArmy } from "./core/entities/gameState";
+import { createGameState, getArmy, addArmy, updateCountriesProductionFromMap } from "./core/entities/gameState";
 import { createDemoMap } from "./core/entities/map";
 import { createCountry } from "./core/entities/country";
 import { createArmy } from "./core/entities/army";
 import { processTick } from "./core/services/tickEngine";
-import { orderMove, orderAttack, orderHold } from "./core/entities/orders";
+import { orderMove, orderAttack, orderHold, orderMoveDelayed, orderPatrol } from "./core/entities/orders";
 import type { GameState } from "./core/entities/gameState";
 import type { UnitInstance } from "./core/rules/combat";
 
@@ -56,6 +56,8 @@ app.post("/games", (req: Request, res: Response) => {
       Object.keys(FACTIONS) as FactionId[],
       countries
     );
+
+    updateCountriesProductionFromMap(gameState);
 
     games[gameId] = gameState;
 
@@ -161,12 +163,14 @@ app.post("/games/:gameId/armies", (req: Request, res: Response) => {
 
 /**
  * POST /games/:gameId/orders
- * Envía una orden a un ejército (hold, move, attack)
+ * Envía una orden a un ejército: hold, move, attack, move_delayed, patrol
+ * - move_delayed: targetProvinceId, delayTicks (cuántos ticks esperar; 1 tick = 5 min)
+ * - patrol: solo para ejércitos con aviones (patrullar; repostaje cada 40 min por 5 min)
  */
 app.post("/games/:gameId/orders", (req: Request, res: Response) => {
   try {
     const { gameId } = req.params;
-    const { armyId, orderType, targetProvinceId, targetArmyId } = req.body;
+    const { armyId, orderType, targetProvinceId, targetArmyId, delayTicks } = req.body;
 
     const game = games[gameId];
     if (!game) {
@@ -184,17 +188,30 @@ app.post("/games/:gameId/orders", (req: Request, res: Response) => {
       });
     }
 
-    // Aplica orden
     if (orderType === "hold") {
       orderHold(army);
     } else if (orderType === "move") {
+      if (!targetProvinceId) {
+        return res.status(400).json({ success: false, error: "Falta targetProvinceId" });
+      }
       orderMove(army, targetProvinceId);
     } else if (orderType === "attack") {
+      if (!targetProvinceId) {
+        return res.status(400).json({ success: false, error: "Falta targetProvinceId" });
+      }
       orderAttack(army, targetProvinceId, targetArmyId);
+    } else if (orderType === "move_delayed") {
+      if (!targetProvinceId || delayTicks == null) {
+        return res.status(400).json({ success: false, error: "Falta targetProvinceId o delayTicks" });
+      }
+      const ticks = Math.max(1, Math.floor(Number(delayTicks)));
+      orderMoveDelayed(army, targetProvinceId, ticks, game.currentTick);
+    } else if (orderType === "patrol") {
+      orderPatrol(army);
     } else {
       return res.status(400).json({
         success: false,
-        error: "Tipo de orden no válido",
+        error: "Tipo de orden no válido (hold, move, attack, move_delayed, patrol)",
       });
     }
 

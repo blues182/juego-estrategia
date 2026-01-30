@@ -27,7 +27,7 @@ export function orderMove(army: Army, targetProvinceId: string): void {
 }
 
 /**
- * Orden ATTACK: ejército ataca a otro ejército en provincia específica
+ * Orden ATTACK: ejército ataca a otro ejército en provincia específica (cooldown 15 min)
  */
 export function orderAttack(army: Army, targetProvinceId: string, targetArmyId?: string): void {
   setArmyOrder(army, {
@@ -35,6 +35,31 @@ export function orderAttack(army: Army, targetProvinceId: string, targetArmyId?:
     targetProvinceId,
     attackArmyId: targetArmyId,
   });
+}
+
+/**
+ * Orden MOVE_DELAYED: moverse a provincia adyacente pero esperar delayTicks antes de ejecutar.
+ * executeAtTick = currentTick + delayTicks (se guarda al asignar la orden).
+ */
+export function orderMoveDelayed(
+  army: Army,
+  targetProvinceId: string,
+  delayTicks: number,
+  currentTick: number
+): void {
+  setArmyOrder(army, {
+    type: "move_delayed",
+    targetProvinceId,
+    delayTicks,
+    executeAtTick: currentTick + delayTicks,
+  });
+}
+
+/**
+ * Orden PATROL: solo para ejércitos con aviones. Patrullar (sin destino); aplica repostaje cada 40 min por 5 min.
+ */
+export function orderPatrol(army: Army): void {
+  setArmyOrder(army, { type: "patrol" });
 }
 
 /**

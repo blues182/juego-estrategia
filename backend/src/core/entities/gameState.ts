@@ -86,6 +86,26 @@ export function removeArmy(state: GameState, armyId: string): void {
 }
 
 /**
+ * Actualiza la producción de cada país según las provincias que controla en el mapa.
+ * Suma manpowerProduction y supplyProduction de las provincias donde owner === factionId.
+ */
+export function updateCountriesProductionFromMap(state: GameState): void {
+  for (const factionId of Object.keys(state.countries) as FactionId[]) {
+    const country = state.countries[factionId];
+    let manpowerPerTick = 0;
+    let supplyPerTick = 0;
+    for (const province of Object.values(state.map.provinces)) {
+      if (province.owner === factionId) {
+        manpowerPerTick += province.manpowerProduction;
+        supplyPerTick += province.supplyProduction;
+      }
+    }
+    country.manpowerPerTick = manpowerPerTick;
+    country.supplyPerTick = supplyPerTick;
+  }
+}
+
+/**
  * Chequea si hay un ganador (una sola facción con ejércitos)
  */
 export function checkVictory(state: GameState): FactionId | null {
