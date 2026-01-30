@@ -17,7 +17,7 @@ export type InfrastructureRequirement =
   | "railway"            // Vía de ferrocarril (bonus, no bloqueante)
   | "supply_depot"       // Depósito de suministros
   | "fortress"           // Fortaleza (defensa)
-  | none;                // Sin requisito
+  | "none";             // Sin requisito
 
 /**
  * Requisitos de infraestructura por tipo de unidad
