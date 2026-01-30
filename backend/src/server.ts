@@ -1,6 +1,8 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
+import fs from "fs";
+import path from "path";
 
 // Importar core
 import { FACTIONS, type FactionId } from "./core/catalog/factions";
@@ -27,6 +29,12 @@ const games: Record<string, GameState> = {};
 // =======================
 // RUTAS API
 // =======================
+
+// Directorio para guardar partidas (snapshots JSON)
+const DATA_DIR = path.join(process.cwd(), "data", "games");
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 /**
  * POST /games
@@ -306,6 +314,47 @@ app.post("/games/:gameId/ticks/:count", (req: Request, res: Response) => {
       success: false,
       error: String(error),
     });
+  }
+});
+
+/**
+ * POST /games/:gameId/save
+ * Guarda el estado actual de la partida en un archivo JSON en /data/games
+ */
+app.post("/games/:gameId/save", (req: Request, res: Response) => {
+  try {
+    const { gameId } = req.params;
+    const game = games[gameId];
+    if (!game) return res.status(404).json({ success: false, error: "Partida no encontrada" });
+
+    const filePath = path.join(DATA_DIR, `${gameId}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(game, null, 2), "utf-8");
+
+    res.json({ success: true, file: filePath });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+/**
+ * POST /games/:gameId/load
+ * Carga el estado de la partida desde /data/games/<gameId>.json
+ */
+app.post("/games/:gameId/load", (req: Request, res: Response) => {
+  try {
+    const { gameId } = req.params;
+    const filePath = path.join(DATA_DIR, `${gameId}.json`);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, error: "Snapshot no encontrado" });
+
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(raw) as GameState;
+
+    // Restaurar al almacenamiento en memoria
+    games[gameId] = parsed;
+
+    res.json({ success: true, gameId });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
   }
 });
 

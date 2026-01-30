@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cliente Demo - Juego Estrategia</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <h1>Cliente Demo - Juego Estrategia</h1>
+
+    <section id="controls">
+      <button id="btnCreate">Crear partida nueva</button>
+      <input id="inputGameId" placeholder="Game ID (o dejar vacío)" />
+      <button id="btnLoad">Cargar partida</button>
+      <button id="btnSave">Guardar partida</button>
+      <button id="btnTick">Ejecutar 1 tick</button>
+    </section>
+
+    <section id="createArmy">
+      <h2>Crear Ejército</h2>
+      <input id="armyOwner" placeholder="Owner (ej: GER)" />
+      <input id="armyProvince" placeholder="ProvinceId (ej: 1-1)" />
+      <input id="armyUnits" placeholder="Units (comma: infantry,medium_tank)" />
+      <button id="btnCreateArmy">Crear Ejército</button>
+    </section>
+
+    <section id="orders">
+      <h2>Enviar Orden</h2>
+      <input id="orderArmyId" placeholder="Army ID" />
+      <select id="orderType">
+        <option value="hold">hold</option>
+        <option value="move">move</option>
+        <option value="attack">attack</option>
+      </select>
+      <input id="orderTarget" placeholder="Target ProvinceId / ArmyId" />
+      <button id="btnSendOrder">Enviar</button>
+    </section>
+
+    <section>
+      <h2>Estado de la Partida</h2>
+      <pre id="gameState">Sin cargar</pre>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
